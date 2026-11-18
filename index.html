@@ -782,20 +782,72 @@ function spark(pos, color) {   // nuvenzinha de poeira / brilho
   m.position.copy(pos).add(new THREE.Vector3((Math.random() - .5) * .25, .1 + Math.random() * .3, (Math.random() - .5) * .25)); world.add(m);
   fx.push({ m, life: 0, max: 0.45, update(k, dt) { m.position.y += dt * .5; m.scale.setScalar(1 + k * 1.5); m.material.opacity = .9 * (1 - k); } });
 }
-function shatter(p, palette) {
-  const pos = p.mesh.userData.base.clone();
-  world.remove(p.mesh); S.pieces = S.pieces.filter(q => q !== p);
+// como as partes voam em cada tipo de golpe: [força para os lados, força para cima]
+const BREAK = { slash: [2.4, 2.6], smash: [3.4, .9], impale: [2.4, 2.0], burn: [1.3, 3.6], ice: [1.9, 2.3], holy: [1.6, 4.4], hit: [2.2, 2.6] };
+const ORDER = ['weapon', 'hatTip', 'hat', 'plume', 'head', 'armL', 'armR', 'legL', 'legR', 'hhead', 'htail', 'hleg0', 'hleg1', 'hleg2', 'hleg3'];
+function puff(pos, n = 7) { burst(pos, [0xffffff, 0xdfe6e2, 0xc8d0cc], n, .9, .55, 1.7, -.6); }
+// o personagem se desmonta: cabeça, chapéu, arma, braços e pernas voam, quicam e somem numa nuvem
+function breakApart(p, kind, dir) {
+  const root = p.mesh; root.updateMatrixWorld(true);
+  const P = root.userData.parts || {}, bits = [];
+  for (const n of ORDER) if (P[n] && P[n].parent) { world.attach(P[n]); bits.push(P[n]); }
+  bits.push(root);
+  const [hs, vs] = BREAK[kind] || BREAK.hit, center = root.position.clone();
+  const tint = kind === 'burn' ? new THREE.Color(0x4a3a34) : kind === 'ice' ? new THREE.Color(0xc4ecff) : null;
+  if (kind === 'smash') root.scale.y *= .35;
+  for (const obj of bits) {
+    if (tint) obj.traverse(m => {
+      if (!m.isMesh || m.material === outlineMat || !m.material.color) return;
+      m.material = m.material.clone(); m.material.color.multiply(tint);
+      if (kind === 'burn' && m.material.emissive) { m.material.emissive.set(0xff5a00); m.material.emissiveIntensity = .55; }
+    });
+    const out = obj.getWorldPosition(new V3()).sub(center).setY(0);
+    if (out.lengthSq() < 1e-4) out.set(Math.random() - .5, 0, Math.random() - .5);
+    out.normalize();
+    const body = obj === root, heavy = body ? .35 : 1;
+    const v = out.multiplyScalar(hs * (.45 + Math.random() * .55) * heavy);
+    if (dir) v.addScaledVector(dir, hs * (kind === 'impale' ? 1.1 : .6) * heavy);
+    v.y = vs * (.6 + Math.random() * .6) * (body ? .5 : 1);
+    const w = new V3(Math.random() - .5, Math.random() - .5, Math.random() - .5).multiplyScalar(body ? 5 : 16);
+    const s0 = obj.scale.clone(); let bounced = false, n = 0;
+    fx.push({ m: obj, life: 0, max: 1.5 + Math.random() * .5, update(k, dt) {
+      v.y -= 11 * dt; obj.position.addScaledVector(v, dt);
+      obj.rotation.x += w.x * dt; obj.rotation.y += w.y * dt; obj.rotation.z += w.z * dt;
+      if (obj.position.y < .06) {
+        obj.position.y = .06;
+        if (v.y < -.8) spark(obj.position, kind === 'ice' ? 0xd8fbff : 0xe8e0d0);
+        if (kind === 'ice' && !bounced) {   // gelo: estilhaça ao bater no chão
+          bounced = true; this.life = Math.max(this.life, this.max * .74);
+          burst(obj.position.clone().setY(.15), [0xffffff, 0xbff6ff, 0x8fe6ff], 10, 1.8, .5, 1.1, 2);
+        }
+        bounced = true; v.y = Math.abs(v.y) > .5 ? -v.y * .38 : 0; v.x *= .62; v.z *= .62; w.multiplyScalar(.55);
+      }
+      if (kind === 'burn' && n++ % 4 === 0 && k < .7) burst(obj.position, [0xff6a00, 0xffb347], 1, .35, .5, .8, -2.2);
+      if (kind === 'holy' && n++ % 5 === 0 && k < .6) spark(obj.position, 0xffe27a);
+      if (k > .76) {
+        const q = 1 - (k - .76) / .24; obj.scale.copy(s0).multiplyScalar(Math.max(.001, q));
+        if (!obj.userData.poofed) { obj.userData.poofed = true; puff(obj.position, body ? 9 : 4); }
+      }
+    } });
+  }
+}
+// opt.kind: slash | smash | impale | burn | ice | holy;  opt.dir: direção do golpe
+function shatter(p, palette, opt = {}) {
+  const pos = p.mesh.userData.base.clone(), kind = opt.kind || 'hit';
+  S.pieces = S.pieces.filter(q => q !== p);
+  breakApart(p, kind, opt.dir ? opt.dir.clone().setY(0).normalize() : null);
+  // estilhaços menores por cima, na cor do time ou do elemento
   const mats = palette ? palette.map(c => std(c, .4, { emissive: c, emissiveIntensity: .35 }))
     : [TEAM[p.team].body.clone(), M.skin.clone(), TEAM[p.team].accent.clone(), M.metal.clone()];
   mats.forEach(m => (m.transparent = true));
-  for (let i = 0; i < 34; i++) {
+  for (let i = 0; i < 18; i++) {
     const m = new THREE.Mesh(shardGeo, mats[i % 6 === 0 ? 1 : i % 5 === 0 ? 2 : i % 7 === 0 ? 3 : 0]); m.castShadow = true;
     m.position.set(pos.x + (Math.random() - .5) * .4, .1 + Math.random() * .7, pos.z + (Math.random() - .5) * .4);
     const a = Math.random() * Math.PI * 2, sp = 1 + Math.random() * 2.4;
     const v = new THREE.Vector3(Math.cos(a) * sp, 2 + Math.random() * 3.2, Math.sin(a) * sp);
     const w = new THREE.Vector3(Math.random() * 10, Math.random() * 10, Math.random() * 10);
-    m.scale.setScalar(.6 + Math.random() * 1.2); world.add(m);
-    fx.push({ m, life: 0, max: 1.3 + Math.random() * .4, update(k, dt) {
+    m.scale.setScalar(.5 + Math.random() * 1); world.add(m);
+    fx.push({ m, life: 0, max: 1.1 + Math.random() * .4, update(k, dt) {
       v.y -= 9.8 * dt; m.position.addScaledVector(v, dt);
       if (m.position.y < .07) { m.position.y = .07; v.y *= -.35; v.x *= .6; v.z *= .6; w.multiplyScalar(.6); }
       m.rotation.x += w.x * dt; m.rotation.y += w.y * dt; m.rotation.z += w.z * dt;
@@ -811,7 +863,7 @@ function shatter(p, palette) {
     if (q.team !== p.team) { if (Math.random() < .75) qu.react = { kind: 'cheer', t: -(.25 + Math.random() * .5), dur: .95 }; }
     else if (qu.base.distanceTo(pos) < 3.2) qu.react = { kind: 'scared', t: -(.05 + Math.random() * .2), dur: .75 };
   }
-  setTimeout(() => toBench(p), 650);
+  setTimeout(() => toBench(p), 900);
 }
 // peças capturadas ficam enfileiradas na borda, atrás do próprio time
 let benchMinis = [];
@@ -880,14 +932,22 @@ function deselect() { S.sel = null; S.moves = []; clearMarkers(); document.getEl
 
 // ---------- Movimento ----------
 // ---------- Movimento: andar de verdade (vira, dá passos, freia), cavalo salta ----------
-function moveTo(p, endV, done) { return p.type === 'N' ? leapTo(p, endV, done) : walkTo(p, endV, done); }
-const WALK = { P: [2.1, .3], B: [1.8, .3], R: [1.6, .26], Q: [2.0, .3], K: [1.7, .32] };   // velocidade (casas/s), passada
+function moveTo(p, endV, done) { return p.type === 'N' ? gallopTo(p, endV, done) : walkTo(p, endV, done); }
+const WALK = { P: [2.3, .25], B: [1.6, .42], R: [1.45, .22], Q: [2.0, .46], K: [1.6, .34] };   // velocidade (casas/s), passada
+// jeito de andar de cada tipo (o animador usa): pernas, braços, pulinho, inclinação, balanço, flutuar…
+const WALK_STYLE = {
+  P: { leg: 1.15, armL: .95, armRx: -.6, armRsw: .15, hop: .085, hopPow: 2.2, lean: .04, roll: .02, nod: 0, chin: -.06, headRoll: .4 },        // marcha militar
+  R: { leg: .5, armL: .55, armRx: -1.3, armRz: .3, hop: .03, hopPow: 1, lean: .1, roll: .15, yaw: .18, nod: .12, headRoll: 1.2 },               // gingado pesado, marreta no ombro
+  B: { hover: .09, leg: 0, armL: .2, armRx: .05, armRsw: .38, hop: .014, hopPow: 1, lean: .03, roll: .05, nod: .04, headRoll: 1 },             // flutua com o cajado
+  Q: { hover: .05, leg: 0, armL: .75, armRx: .3, hop: .13, hopPow: .7, lean: .06, roll: .09, nod: .07, headRoll: 1.5 },                        // saltinhos leves
+  K: { leg: .65, armL: .3, armRx: -.2, hop: .03, hopPow: 1, lean: -.06, roll: .03, nod: .03, chin: -.13, headRoll: .5 },                       // passo nobre, peito estufado
+};
 function walkTo(p, endV, done) {
   const ud = p.mesh.userData, start = ud.base.clone(), dist = Math.hypot(endV.x - start.x, endV.z - start.z);
   if (dist < .02) return done();
   const [speed, stride] = WALK[p.type] || [2, .3], dur = Math.max(420, dist / speed * 1000);
   lookAt(p, endV, 170, () => {
-    let step = 0;
+    let step = 0, frame = 0;
     tween(dur, k => {
       const e = k * k * (3 - 2 * k);   // arranca e freia suave
       ud.base.lerpVectors(start, endV, e);
@@ -895,14 +955,62 @@ function walkTo(p, endV, done) {
       ud.phase = (e * dist / stride) * Math.PI;
       const s = Math.floor(ud.phase / Math.PI);
       if (s !== step) { step = s; footstep(p); }
+      if (frame++ % 2 === 0) walkTrail(p);
     }, () => { ud.walkW = 0; ud.base.copy(endV); done(); });
   });
 }
-function footstep(p) {   // poeirinha a cada passo (o anão faz o chão tremer)
-  const ud = p.mesh.userData, heavy = p.type === 'R', robe = p.type === 'B' || p.type === 'Q';
-  const at = ud.base.clone().setY(.06);
-  for (let i = 0; i < (heavy ? 5 : robe ? 1 : 2); i++) spark(at, heavy ? 0xd9cbb0 : robe ? 0xd8f0ff : 0xe8f0e0);
-  if (heavy) S.shake = Math.max(S.shake, .035);
+function footstep(p) {   // cada tipo marca o passo do seu jeito
+  const ud = p.mesh.userData, at = ud.base.clone().setY(.06);
+  if (p.type === 'R') { for (let i = 0; i < 6; i++) spark(at, 0xd9cbb0); shockwave(at, 0xd9cbb0, .8); S.shake = Math.max(S.shake, .045); }
+  else if (p.type === 'P') { for (let i = 0; i < 2; i++) spark(at, 0xe8f0e0); }
+  else if (p.type === 'K') { spark(at, 0xe8f0e0); burst(at.clone().setY(.1), [0xffe27a, 0xfff2b0], 3, .6, .5, .7, -1); }
+}
+function walkTrail(p) {   // rastro enquanto anda: mago solta faíscas/neve, feiticeira brasas da tocha
+  const ud = p.mesh.userData;
+  if (p.type === 'B') {
+    const fire = p.team === 'a', at = ud.base.clone().add(new V3((Math.random() - .5) * .25, .12, (Math.random() - .5) * .25));
+    burst(at, fire ? [0xff7a2a, 0xffc04a] : [0xd8fbff, 0xffffff, 0x8fe6ff], 1, .3, .7, .8, fire ? -1.2 : .6);
+  } else if (p.type === 'Q' && ud.weapon) {
+    ud.weapon.updateMatrixWorld(true);
+    burst(ud.weapon.localToWorld(new V3(0, .26, 0)), [0xff6a00, 0xffb347, 0xffe08a], 1, .25, .55, .8, -1.5);
+  }
+}
+// cavaleiro: galopa pelo "L" e pula por cima de quem estiver no caminho
+const angLerp = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
+function gallopTo(p, endV, done) {
+  const ud = p.mesh.userData, start = ud.base.clone(), dx = endV.x - start.x, dz = endV.z - start.z;
+  if (Math.hypot(dx, dz) < .02) return done();
+  const corner = Math.abs(dx) >= Math.abs(dz) ? new V3(endV.x, start.y, start.z) : new V3(start.x, start.y, endV.z);
+  const L1 = start.distanceTo(corner), L2 = corner.distanceTo(endV), L = L1 + L2;
+  const a1 = L1 > .01 ? Math.atan2(corner.x - start.x, corner.z - start.z) : Math.atan2(dx, dz), a2 = L2 > .01 ? Math.atan2(endV.x - corner.x, endV.z - corner.z) : a1;
+  const bumps = [];   // casas ocupadas no caminho (distância ao longo do trajeto)
+  const n1 = Math.round(L1);
+  for (let i = 1; i <= n1; i++) {
+    const q = start.clone().lerp(corner, i / L1), c = Math.round(q.x + 3.5), r = Math.round(q.z + 3.5);
+    if (q.distanceTo(endV) > .3 && inside(c, r) && S.board[c][r] && S.board[c][r] !== p) bumps.push(i);
+  }
+  const dur = 260 + L / 3.1 * 1000;
+  lookAt(p, corner.distanceTo(start) > .01 ? corner : endV, 160, () => {
+    tween(200, k => { ud.rear = Math.sin(k * Math.PI) * .8; }, () => {
+      let lastBeat = 0;
+      tween(dur, k => {
+        const sd = L * (k * k * (3 - 2 * k)), pos = sd <= L1 ? start.clone().lerp(corner, L1 ? sd / L1 : 1) : corner.clone().lerp(endV, (sd - L1) / L2);
+        ud.base.copy(pos);
+        ud.lookW = 1; ud.lookA = sd < L1 - .3 ? a1 : sd > L1 + .3 ? a2 : angLerp(a1, a2, (sd - (L1 - .3)) / .6);
+        ud.gph = sd / .55 * Math.PI * 2; ud.gallopW = Math.min(1, k * 6, (1 - k) * 6);
+        let h = Math.abs(Math.sin(ud.gph / 2)) * .12 * ud.gallopW;
+        for (const b of bumps) { const d = Math.abs(sd - b); if (d < .8) h = Math.max(h, 1.0 * (1 - (d / .8) ** 2)); }
+        ud.hop = h;
+        const beat = Math.floor(ud.gph / (Math.PI * 2));
+        if (beat !== lastBeat) { lastBeat = beat; for (let i = 0; i < 3; i++) spark(pos.clone().setY(.05), 0xe8e0d0); }
+      }, () => {
+        ud.hop = 0; ud.gallopW = 0; ud.base.copy(endV); shockwave(endV, 0xffffff, 2);
+        for (let i = 0; i < 6; i++) spark(endV.clone().setY(0), 0xf3e6c8);
+        tween(320, k => { ud.sq = 1 - .25 * Math.exp(-4 * k) * Math.cos(k * 14); }, () => { ud.sq = 1; });
+        done();
+      });
+    });
+  });
 }
 function leapTo(p, endV, done) {   // cavaleiro: o cavalo empina, salta em arco e aterrissa
   const ud = p.mesh.userData, start = ud.base.clone(), dist = Math.hypot(endV.x - start.x, endV.z - start.z);
@@ -1014,25 +1122,25 @@ function animate(p, dt, t) {
     an.sweat -= dt; if (an.sweat < 0) { an.sweat = .45 + Math.random() * .4; spark(ud.base.clone().add(new V3((Math.random() - .5) * .3, .85, .1)), 0x8fd8ff); }
   }
   // andar: pernas e braços alternados, corpo sobe e desce, túnica balança
-  const robe = !P.legL && p.type !== 'N', sw = Math.sin(ph) * W;
-  hop += Math.abs(Math.sin(ph)) * (robe ? .025 : .055) * W;
-  lean += .12 * W; roll += robe ? Math.sin(ph) * .07 * W : Math.sin(ph) * .025 * W;
-  rot(P.legL, sw * .8, 0, 0); rot(P.legR, -sw * .8, 0, 0);
-  rot(P.armL, -sw * .55 + aLx, 0, aLz);
-  rot(P.armR, sw * .35 + (A.rx || 0) + aRx, A.ry || 0, (A.rz || 0) + aRz);
+  const WS = WALK_STYLE[p.type] || WALK_STYLE.P, sw = Math.sin(ph) * W, c2 = Math.abs(Math.sin(ph));
+  hop += (WS.hover ? (WS.hover + Math.sin(t * 3.2) * .02) * W : 0) + Math.pow(c2, WS.hopPow || 1) * (WS.hop || 0) * W;
+  lean += (WS.lean || 0) * W; roll += Math.sin(ph) * (WS.roll || 0) * W; iy += Math.sin(ph) * (WS.yaw || 0) * W;
+  rot(P.legL, sw * (WS.leg || 0), 0, 0); rot(P.legR, -sw * (WS.leg || 0), 0, 0);
+  rot(P.armL, -sw * (WS.armL || 0) + aLx, 0, aLz);
+  rot(P.armR, (WS.armRx || 0) * W + sw * (WS.armRsw || 0) + (A.rx || 0) + aRx, A.ry || 0, (A.rz || 0) + aRz + (WS.armRz || 0) * W);
   offs(P.armR, A.ox || 0, A.oy || 0, A.oz || 0);
   rot(P.weapon, A.wrx || 0, A.wry || 0, A.wrz || 0, true);
   an.yaw += (iy - an.yaw) * Math.min(1, dt * 8);
   an.pitch += (ip - (A.lean || 0) * .35 - an.pitch) * Math.min(1, dt * 8);
-  rot(P.head, an.pitch + Math.sin(ph * 2) * .05 * W, an.yaw, roll * 1.5);
+  rot(P.head, an.pitch + Math.sin(ph * 2) * (WS.nod || 0) * W + (WS.chin || 0) * W, an.yaw, roll * (WS.headRoll ?? 1.5));
   if (P.eyes) P.eyes.scale.y = P.eyes.userData.baseS.y * eyes;
   // cavalo: galope/salto, empinar, cabeça e casco
   if (P.hleg0) {
-    const g = ud.gallop || 0, rear = ud.rear || 0;
-    rot(P.hleg0, -.9 * g - 1.1 * rear - .7 * paw, 0, 0); rot(P.hleg1, -.7 * g - 1.0 * rear, 0, 0);
-    rot(P.hleg2, .8 * g + .2 * rear, 0, 0); rot(P.hleg3, .6 * g + .2 * rear, 0, 0);
-    rot(P.hhead, Math.sin(t * 1.7 + ud.ph) * .06 - .35 * rear + .15 * g + .12 * paw, 0, 0);
-    lean -= .32 * rear;
+    const g = ud.gallop || 0, rear = ud.rear || 0, gw = ud.gallopW || 0, gp = ud.gph || 0;
+    rot(P.hleg0, -.9 * g - 1.1 * rear - .7 * paw + Math.sin(gp) * .95 * gw, 0, 0); rot(P.hleg1, -.7 * g - 1.0 * rear + Math.sin(gp + .6) * .95 * gw, 0, 0);
+    rot(P.hleg2, .8 * g + .2 * rear + Math.sin(gp + Math.PI) * .85 * gw, 0, 0); rot(P.hleg3, .6 * g + .2 * rear + Math.sin(gp + Math.PI + .6) * .85 * gw, 0, 0);
+    rot(P.hhead, Math.sin(t * 1.7 + ud.ph) * .06 - .35 * rear + .15 * g + .12 * paw + Math.sin(gp) * .2 * gw, 0, 0);
+    lean -= .32 * rear - Math.sin(gp) * .09 * gw;
   }
   // molas: chapéus, barbas, capa, penacho, cabelo e rabo atrasam com o movimento
   const pos = p.mesh.position, yaw = p.mesh.rotation.y;
@@ -1104,9 +1212,9 @@ const ATTACK = {
     [220, { rx: -1.3, rz: .5, lean: -.12 }, ease],
     [110, { rx: 1.8, rz: -.7, lean: .3 }, fast, hit],
     [260, {}, ease],
-  ], done), cap => {
+  ], done), (cap, p, dir) => {
     slashFX(hitBase(cap), 0xffffff, -.5); burst(hitBase(cap), [0xffffff, 0xfff0b0], 14, 2.6, .35);
-    S.shake = .12; shatter(cap);
+    S.shake = .12; shatter(cap, null, { kind: 'slash', dir });
   }),
   // rei paladino: salto girando com o espadão erguido, feixe de luz do céu e golpe sagrado
   K: (p, cap, done) => melee(p, cap, .8, (dir, hit) => {
@@ -1119,12 +1227,12 @@ const ATTACK = {
       [380, { rx: 1.7, lean: .2 }, ease],
       [300, {}, ease],
     ], done);
-  }, cap => {
+  }, (cap, p, dir) => {
     const cu = cap.mesh.userData, at = hitBase(cap);
     slashFX(at, 0xffe27a, -1.3); slashFX(at, 0xffffff, -1.0);
     shockwave(cu.base, 0xffe27a, 5); shockwave(cu.base, 0xffffff, 3);
     flash(at, 0xfff2b0, 2.6, .5); burst(at, [0xffe27a, 0xfff6d0, 0xffc23a], 30, 3, .7, 1.2, -1);
-    S.shake = .3; shatter(cap);
+    S.shake = .3; shatter(cap, null, { kind: 'holy', dir });
   }),
   // feiticeira: gira a tocha, abre um círculo de runas sob o inimigo e ergue uma coluna de fogo
   Q: (p, cap, done) => {
@@ -1156,7 +1264,7 @@ const ATTACK = {
   }, (cap, p, dir) => {
     const cu = cap.mesh.userData;
     burst(hitBase(cap), [0xffffff, 0xff5a4a], 12, 2.2, .35); flash(hitBase(cap), 0xffffff, 1);
-    tween(300, k => { cu.hop = .3 * fast(k); cu.lean = -.6 * fast(k); cu.base.addScaledVector(dir, .004); }, () => { S.shake = .12; shatter(cap); });
+    tween(300, k => { cu.hop = .3 * fast(k); cu.lean = -.6 * fast(k); cu.base.addScaledVector(dir, .004); }, () => { S.shake = .12; shatter(cap, null, { kind: 'impale', dir }); });
   }),
   // guarda da torre (anão): marretada por cima da cabeça
   R: (p, cap, done) => melee(p, cap, .66, (dir, hit) => poseSeq(p, [
@@ -1169,7 +1277,7 @@ const ATTACK = {
     shockwave(at, 0xfff3d0, 5); shockwave(at, 0xffffff, 3);
     burst(at.clone().setY(.1), [0xd9cbb0, 0xffffff, 0xb9a98c], 26, 3.2, .7, 1.3, 2);
     flash(at.clone().setY(.3), 0xffffff, 1.6); S.shake = .38;
-    tween(90, k => { cu.sq = 1 - .65 * k; }, () => shatter(cap));
+    tween(90, k => { cu.sq = 1 - .65 * k; }, () => shatter(cap, null, { kind: 'smash' }));
   }),
   // mago: fogo (vermelho) ou gelo (azul) lançado do cajado
   B: (p, cap, done) => {
@@ -1192,7 +1300,7 @@ function burnHit(cap, done) {
   S.shake = .2;
   // chamas subindo onde o inimigo estava
   const base = cap.mesh.userData.base.clone();
-  shatter(cap, [0x3a2a24, 0xff7a1a, 0xffb347, 0x1e1614]);
+  shatter(cap, [0x3a2a24, 0xff7a1a, 0xffb347, 0x1e1614], { kind: 'burn' });
   let n = 0; tween(700, () => { if (n++ % 2 === 0) burst(base.clone().setY(.1 + Math.random() * .3), [0xff6a00, 0xffc04a], 2, .5, .6, 1, -2.2); });
   done();
 }
@@ -1206,7 +1314,7 @@ function freezeHit(cap, done) {
     tween(380, k => { ice.position.x = cu.base.x + Math.sin(k * 60) * .02 * k; }, () => {
       world.remove(ice);
       flash(at, 0xffffff, 1.6); S.shake = .18;
-      shatter(cap, [0xd8fbff, 0x8fe6ff, 0xffffff, 0x5fc8ef]);
+      shatter(cap, [0xd8fbff, 0x8fe6ff, 0xffffff, 0x5fc8ef], { kind: 'ice' });
       done();
     });
   });
@@ -1233,7 +1341,7 @@ function firePillar(cap, done) {
   burst(at, [0xff5a00, 0xffa030, 0xffe070], 30, 2.4, .9, 1.3, -4);
   let n = 0; tween(800, () => { if (n++ % 2 === 0) burst(base.clone().setY(.1 + Math.random() * .4), [0xff6a00, 0xffc04a, 0xffe08a], 3, 1.2, .8, 1, -4); });
   S.shake = .25;
-  tween(180, k => { cu.hop = .45 * fast(k); cu.spin = k * 3; }, () => { shatter(cap, [0x3a2a24, 0xff7a1a, 0xffb347, 0x1e1614]); done(); });
+  tween(180, k => { cu.hop = .45 * fast(k); cu.spin = k * 3; }, () => { shatter(cap, [0x3a2a24, 0xff7a1a, 0xffb347, 0x1e1614], { kind: 'burn' }); done(); });
 }
 function holyBeam(cap) {   // feixe de luz dourada descendo do céu sobre o alvo
   const b = cap.mesh.userData.base;
