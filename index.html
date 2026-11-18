@@ -106,7 +106,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-10, 10, 6, -6, 0.1, 100);
 const EL = Math.atan(1 / Math.SQRT2);   // elevação isométrica (~35,26°)
 const DIST = 30;
-let camAng = Math.PI / 4, camTarget = camAng;
+const CAM_RED_LEFT = Math.PI / 4 + Math.PI;   // seu time (Vermelho) começa do lado esquerdo da tela
+let camAng = CAM_RED_LEFT, camTarget = camAng;
 const DEFAULT_ZOOM = 1.45;
 camera.zoom = DEFAULT_ZOOM;
 
@@ -1642,7 +1643,7 @@ async function enterRoom(code, role, fresh, keep = true) {
   if (keep) try { const all = JSON.parse(localStorage.getItem('xp-salas') || '{}'); all[code] = role; localStorage.setItem('xp-salas', JSON.stringify(all)); } catch (e) {}
   history.replaceState(null, '', '?sala=' + code);
   mode = 'pvp'; aiToken++; modeBtn.style.display = 'none'; netEl('netBtn').textContent = '🌐 Sala';
-  camTarget = role === 'a' ? Math.PI / 4 + Math.PI : Math.PI / 4;   // seu time fica perto de você
+  camTarget = role === 'a' ? Math.PI / 4 + Math.PI : Math.PI / 4;   // seu time começa do lado esquerdo da tela
   netStatus('conectando…');
   if (fresh) { net.game = newCode(); setup(); await netSend({ t: 'reset', g: net.game }); }
   else {
@@ -1663,6 +1664,7 @@ function leaveRoom() {
   history.replaceState(null, '', location.pathname);
   try { const m = localStorage.getItem('xp-modo'); mode = m ? (m === 'pvp' ? 'pvp' : +m) : 2; } catch (e) { mode = 2; } showMode();
   modeBtn.style.display = ''; netEl('netBtn').textContent = '🌐 Online'; netEl('netLine').textContent = '';
+  camTarget = camAng + Math.atan2(Math.sin(CAM_RED_LEFT - camAng), Math.cos(CAM_RED_LEFT - camAng));   // volta: Vermelho à esquerda
   setup(); showNet();
 }
 setInterval(() => { if (net.on) netSend({ t: 'here', role: net.role }); }, 60000);
