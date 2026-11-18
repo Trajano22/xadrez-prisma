@@ -27,7 +27,7 @@
   #info b { color:var(--ink); font-weight:600; }
   #last { font-size:12px; color:var(--dim); margin-top:6px; }
   #controls { position:fixed; right:20px; bottom:20px; display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; max-width:calc(100vw - 32px); }
-  #netLine { font-size:12px; color:#9dff9a; margin-top:6px; }
+  #netLine { font-size:12px; color:#9dff9a; margin-top:6px; } #netLine .ns { display:none; }
   #net { position:fixed; inset:0; display:grid; place-items:center; background:rgba(4,10,9,.5); backdrop-filter:blur(3px); padding:16px; }
   #net[hidden] { display:none; }
   .netcard { max-width:420px; width:100%; }
@@ -46,9 +46,15 @@
   .card h2 { margin:0 0 6px; font-size:30px; letter-spacing:.06em; }
   .card p { color:var(--dim); margin:0 0 20px; font-size:16px; }
   @media (max-width:600px) {
-    #hud { top:12px; left:12px; padding:12px 14px; } #controls { right:12px; bottom:12px; gap:8px; max-width:calc(100vw - 24px); } #help { display:none; }
+    /* celular: o painel vira uma barrinha fina no topo */
+    #hud { top:10px; left:50%; transform:translateX(-50%); width:auto; max-width:calc(100vw - 20px); padding:7px 14px; border-radius:999px;
+      display:flex; align-items:center; gap:10px; white-space:nowrap; }
+    #hud .t1, #hud .t2, #hud .lead, #info, #last { display:none; }
+    .turn { font-size:14px; gap:8px; } .dot { width:12px; height:12px; border-width:2px; }
+    #status { margin:0; min-height:0; font-size:12px; } #status:empty, #netLine:empty { display:none; }
+    #netLine { margin:0; font-size:13px; } #netLine .nl { display:none; } #netLine .ns { display:inline; }
+    #controls { right:12px; bottom:12px; gap:8px; max-width:calc(100vw - 24px); } #help { display:none; }
     #controls button { font-size:14px; padding:8px 11px; }
-    .t1 { font-size:18px; } #info { min-height:0; }
   }
 </style>
 <script type="importmap">
@@ -1363,8 +1369,8 @@ setInterval(() => { if (net.on) netSend({ t: 'here', role: net.role }); }, 60000
 setInterval(() => net.on && netStatus(), 10000);
 function netStatus(extra) {
   if (!net.on) { netEl('netLine').textContent = ''; return; }
-  const me = TEAM[net.role].name;
-  netEl('netLine').textContent = `🌐 Sala ${net.code.slice(0, 4).toUpperCase()} · você é o ${me} · ` + (extra || (peerOnline() ? 'amigo online ✓' : 'esperando o amigo…'));
+  const ok = !extra && peerOnline();
+  netEl('netLine').innerHTML = `🌐 <span class="nl">${extra || (ok ? 'amigo online ✓' : 'esperando amigo…')}</span><b class="ns">${ok ? '✓' : extra ? '⟳' : '…'}</b>`;
   updateHud();
   const msg = netEl('netMsg'); if (msg) msg.innerHTML = netMsgText();
 }
