@@ -521,8 +521,7 @@ function chibiFace(g, hc, hr, o = {}) {
 // corpinho chibi com articulações: pernas (no quadril), braços (no ombro) e cabeça (no pescoço)
 function chibi(T, o = {}) {
   const g = new THREE.Group(), hr = o.hr ?? .19, wd = o.wide ?? 1;
-  if (!o.mount) g.add(seg(0, .045, .25, T.dark, .02, .02), seg(.035, .012, .2, T.accent));
-  const y0 = .045, legs = {};
+  const y0 = .005, legs = {};   // sem disco na base: os pés pisam direto no chão
   if (!o.robe && !o.mount) for (const s of [-1, 1]) {
     const L = partNode(s < 0 ? 'legL' : 'legR', new V3(s * .065 * wd, y0 + .14, 0), g);
     L.add(part(new THREE.CapsuleGeometry(.05 * wd, .05, 4, 10), o.legs ?? C.pants, s * .065 * wd, y0 + .1, 0));
@@ -660,13 +659,13 @@ function makePiece(type, team) {
     }
     case 'N': {   // cavaleiro montado: elmo com penacho, lança com flâmula, cavalo com manta do time
       k = .9;
-      const g = grp(seg(0, .045, .3, T.dark, .02, .02), seg(.035, .012, .25, T.accent));
-      const H = horse(T); H.rotation.y = -.75; H.scale.setScalar(1.22); g.add(H);
+      const g = new THREE.Group();
+      const H = horse(T); H.rotation.y = -.75; H.scale.setScalar(1.22); H.position.y = -.05; g.add(H);
       const r = chibi(T, { mount: true, armR: .5, armL: .45 });
       chibiFace(r.head, r.hc, r.hr, { mouth: 'open', angry: true });
       knightHelm(r.head, r.hc, r.hr, T);
       gripAt(r.arms.R, lanceC(T), r.hands.R, -.35, 0, true);
-      r.g.position.set(0, .5 - r.y0, -.03);   // sentado na sela
+      r.g.position.set(0, .45 - r.y0, -.03);   // sentado na sela
       g.add(r.g);
       c = { g };
       break;
